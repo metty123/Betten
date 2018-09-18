@@ -1,0 +1,10 @@
+package de.htwg.om.thesis.bbp.model;
+
+public enum SolverEnum {
+	
+
+	Cplex, LPSolve, Gurobi
+
+
+
+}

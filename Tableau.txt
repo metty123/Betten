@@ -1,0 +1,861 @@
+package de.htwg.om.thesis.bbp.logic;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+
+import de.htwg.om.thesis.bbp.controller.Controller;
+import de.htwg.om.thesis.bbp.model.Bed;
+import de.htwg.om.thesis.bbp.model.OperatorEnum;
+import de.htwg.om.thesis.bbp.model.Patient;
+import de.htwg.om.thesis.bbp.model.PatientMatch;
+import gurobi.GRB;
+import gurobi.GRBEnv;
+import gurobi.GRBException;
+import gurobi.GRBModel;
+import ilog.concert.IloException;
+import ilog.concert.IloLinearNumExpr;
+import ilog.concert.IloNumExpr;
+import ilog.concert.IloNumVar;
+import ilog.concert.IloNumVarType;
+import ilog.cplex.IloCplex;
+import lpsolve.LpSolve;
+import lpsolve.LpSolveException;
+
+
+public class Tableau {
+	
+	// Anzahl der Betten
+	static int bedCount = Controller.getInstance().getBedCount();
+	
+	
+	// Schaltervariable
+			static double switchVariable = Controller.getInstance().getSwitchVariable();
+
+			// Bettengewichtung Zielfunktion
+			static double gewichtungZielfunktionBetten = Controller.getInstance().getGewichtungZielfunktionBetten();
+			
+			static int patientsDays;
+	
+			
+			static SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy", Locale.GERMANY);
+
+	
+			private static int calculatePatientsDays(ArrayList<Patient> patients) {
+				// Gesamtanzahl der Verweildauer aller Patienten
+				int patientsDayCount = 0;
+
+				for (int i = 0; i < patients.size(); i++) {
+
+					// Patiententage gesamt
+					patientsDayCount += patients.get(i).getDuration();
+				}
+				return patientsDayCount;
+
+			}
+
+	private static int calculateDifFirstLastDate(Date firstArrival, Date lastDeparture) {
+		return (int) (((lastDeparture.getTime() - firstArrival.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+	}
+
+	private static void ausgabe(double[][] matrix) {
+
+		System.out.println("AUSGABE");
+		for (int i = 0; i < matrix[0].length; i++) {
+			System.out.print("Restriktion" + (i + 1) + " ");
+			for (int j = 0; j < matrix.length; j++) {
+				System.out.print(matrix[j][i] + " | ");
+			}
+			System.out.println();
+		}
+	}
+
+	private static double[][] fusionX(double[][] matrix, double[][] matrixAppend, int bedCount) {
+		for (int i = 0; i < bedCount; i++) {
+
+			for (int j = 0; j < matrixAppend[0].length; j++) {
+
+				for (int k = 0; k < matrixAppend.length; k++) {
+
+					matrix[((i * matrixAppend.length) + k)][j] = matrixAppend[k][j];
+
+				}
+			}
+		}
+		return matrix;
+	}
+
+	
+	//
+	private static double[][] fusion(double[][] matrix, double[][] matrixAppend, int bedCount) {
+		//Bedcount Durchgaenge
+				for (int k = 0; k < bedCount; k++) {
+					
+					//Mehrdimensionale Copy Array Struktur
+					for (int i = 0; i < matrixAppend.length; i++) {
+						
+						for (int j = 0; j < matrixAppend[0].length; j++) {
+							
+							matrix[(((k*matrixAppend.length)+i))][(((k*matrixAppend[0].length)+j))]=matrixAppend[i][j];
+						}
+					}	
+				}
+				return matrix;
+	}
+	//
+	
+	
+	
+	
+	private static double[][] fusion1(double[][] matrix, double[][] matrixAppend, int bedCount) {
+
+		for (int i = 0; i < bedCount; i++) {
+
+			for (int j = 0; j < matrixAppend[0].length; j++) {
+
+				for (int k = 0; k < matrixAppend.length; k++) {
+
+					matrix[k][j] = matrixAppend[k][j];
+
+					for (int k2 = 0; k2 < bedCount; k2++) {
+						matrix[k + (matrixAppend.length * k2)][j + (matrixAppend[0].length * k2)] = matrixAppend[k][j];
+					}
+				}
+			}
+		}
+
+		return matrix;
+	}
+
+	private static double[][] generateMatrixPart1Muster(ArrayList<Patient> patients) {
+
+
+		Date firstArrival = calculateFirstArrivalDate(patients);
+
+		Date lastDeparture = calculateLastDeparture(patients);
+
+		int difFirstLastDate = calculateDifFirstLastDate(firstArrival, lastDeparture);
+
+		double matrix[][] = new double[patientsDays][difFirstLastDate];
+
+		int x = 0;
+		for (int i = 0; i < patients.size(); i++) {
+
+			for (int j = 0; j < patients.get(i).getDuration(); j++) {
+				matrix[x][((int) ((patients.get(i).getArrivalDate().getTime() - firstArrival.getTime())
+						/ (1000 * 60 * 60 * 24))) + j] = 1.0;
+				x++;
+			}
+		}
+
+		return matrix;
+
+	}
+
+	private static double[][] generateMatrixPart1(ArrayList<Patient> patients, int xAchse, int difFirstLastDate) {
+
+		double[][] matrixPart1Muster = generateMatrixPart1Muster(patients);
+		
+		double[][] matrixPart1 = new double[xAchse][bedCount * difFirstLastDate];
+
+		matrixPart1 = fusion(matrixPart1, matrixPart1Muster, bedCount);
+
+		// Fill b-Vector with 1.0
+		for (int i = 0; i < matrixPart1[0].length; i++) {
+			matrixPart1[matrixPart1.length - 1][i] = 1.0;
+		}
+
+		return matrixPart1;
+	}
+
+	private static double[][] generateMatrixPart2Muster(ArrayList<Patient> patients) {
+
+		double matrix[][] = new double[patientsDays][patients.size()];
+
+		int x = 0;
+		for (int i = 0; i < patients.size(); i++) {
+
+			for (int j = 0; j < patients.get(i).getDuration(); j++) {
+				matrix[x][i] = 1.0;
+				x++;
+			}
+		}
+
+		return matrix;
+	}
+
+	private static double[][] generateSwitchMatrixPart2(double[][] matrixPart2, int patientsDays, int bedCount,
+			ArrayList<Patient> patients) {
+
+		int startX = patientsDays * bedCount;
+
+		for (int i = 0; i < (matrixPart2[0].length - 1); i++) {
+
+			matrixPart2[startX + i][((i * patients.size()) % ((matrixPart2[0].length - 1)))] = switchVariable;
+
+		}
+		matrixPart2[(startX + (bedCount * patients.size())-1)][matrixPart2[0].length - 1] = switchVariable;
+
+		return matrixPart2;
+	}
+
+	private static double[][] generatebVectorMatrixPart2(double[][] matrixPart2) {
+
+		for (int i = 0; i < matrixPart2[0].length; i++) {
+
+			double count = 0.0;
+			for (int j = 0; j < matrixPart2.length; j++) {
+
+				count += matrixPart2[j][i];
+
+			}
+			matrixPart2[matrixPart2.length - 1][i] = count;
+		}
+
+		return matrixPart2;
+	}
+
+	private static double[][] generateMatrixPart2(ArrayList<Patient> patients, int xAchse, int difFirstLastDate,
+			int patientsDays, int bedCount) {
+		
+		Date start = new Date();
+
+		double[][] matrixPart2Muster = generateMatrixPart2Muster(patients);
+		
+		//System.out.println("Zeit matrixPart2Muster: " + (new Date().getTime()-start.getTime()));	
+		start = new Date();
+
+		double[][] matrixPart2 = new double[xAchse][bedCount * patients.size()];
+		
+		matrixPart2 = fusion(matrixPart2, matrixPart2Muster, bedCount);
+
+		//System.out.println("Zeit fusion(matrixPart2, matrixPart2Muster, bedCount): " + (new Date().getTime()-start.getTime()));	
+		start = new Date();
+		
+		matrixPart2 = generateSwitchMatrixPart2(matrixPart2, patientsDays, bedCount, patients);
+		
+		//System.out.println("Zeit generateSchalterMatrixPart2(matrixPart2, patientsDays, bedCount, patients): " + (new Date().getTime()-start.getTime()));	
+		start = new Date();
+
+		matrixPart2 = generatebVectorMatrixPart2(matrixPart2);
+		
+		//System.out.println("Zeit generatebVectorMatrixPart2(matrixPart2);: " + (new Date().getTime()-start.getTime()));	
+		start = new Date();
+
+		return matrixPart2;
+	}
+
+	private static double[][] generateMatrixPart3Muster(ArrayList<Patient> patients) {
+
+		return generateMatrixPart1Muster(patients);
+
+	}
+
+	private static double[][] generateMatrixPart3(ArrayList<Patient> patients, int xAchse, int difFirstLastDate,
+			int bedCount) {
+
+		double[][] matrixPart3Muster = generateMatrixPart3Muster(patients);
+
+		double[][] matrixPart3 = new double[xAchse][difFirstLastDate];
+
+		matrixPart3 = fusionX(matrixPart3, matrixPart3Muster, bedCount);
+
+		// Fill y-Vector with -1.0
+		for (int i = 0; i < matrixPart3[0].length; i++) {
+			matrixPart3[matrixPart3.length - 2][i] = -1.0;
+		}
+
+		return matrixPart3;
+	}
+
+	private static double[][] generateMatrixPart4(ArrayList<Patient> patients, int xAchse, int difFirstLastDate,
+			int patientsDayCount, int bedCount) {
+
+		double[][] matrixPart4 = new double[xAchse][patients.size()];
+
+		// Muster
+		int startX = patientsDayCount * bedCount;
+		for (int i = 0; i < patients.size(); i++) {
+
+			for (int j = 0; j < bedCount; j++) {
+				matrixPart4[startX + j][i] = 1.0;
+			}
+			startX += bedCount;
+		}
+
+		// Fill b-Vector with 1.0
+		for (int i = 0; i < matrixPart4[0].length; i++) {
+			matrixPart4[matrixPart4.length - 1][i] = 1.0;
+		}
+
+		return matrixPart4;
+
+	}
+	
+
+	public static void generateGesamtMaxtrix(ArrayList<Patient> patients, String selectedSolver) {
+		
+		// Set firstArrivalDate
+		Controller.getInstance().setFirstArrivalDate(calculateFirstArrivalDate(patients));
+				
+		// Set LastDepature
+		Controller.getInstance().setLastDepatureDate(calculateLastDeparture(patients));
+		
+		System.out.println("AnzahlPatienten: " + patients.size());
+		
+		System.out.println("FirstArrival: " + sdf.format(calculateFirstArrivalDate(patients)));
+		
+		System.out.println("LastDepature: "+ sdf.format(calculateLastDeparture(patients)));
+		
+		System.out.println("Gesamtzeitraum: " + calculateDifFirstLastDate(calculateFirstArrivalDate(patients), calculateLastDeparture(patients)));
+		
+		Date start = new Date();
+
+		// Anzahl X/Variablen
+		patientsDays = calculatePatientsDays(patients);
+		
+		int difFirstLastDate = calculateDifFirstLastDate(calculateFirstArrivalDate(patients),
+				calculateLastDeparture(patients));
+
+		
+		
+		// Anzahl X-Achse / Anzahl Variablen
+		int varCount = 0;
+		
+		// Patienten- und Bettenvariablen 
+		varCount += bedCount * patientsDays;
+		
+		// Schalter 
+		varCount += bedCount * patients.size();
+		
+		// y-Presse
+		varCount += 1;
+			
+		// b-Vector
+		varCount += 1;
+		
+		System.out.println("Variablen: " + (varCount-1)); //-1 wegen b-Vector
+
+		
+		
+		// Anzahl Y-Achse/Restrikionen
+		int restrictionCount = 0;
+		
+		// Matrix1 
+		restrictionCount += difFirstLastDate * bedCount;
+		
+		// Matrix2 
+		restrictionCount += difFirstLastDate * bedCount;
+
+		// Matrix3 
+		restrictionCount += difFirstLastDate;
+		
+		// Matrix4 
+		restrictionCount += difFirstLastDate;
+	
+		System.out.println("Restriktionen: " + restrictionCount);
+			
+		// fill Cplex
+				try {
+					IloCplex cplex = new IloCplex();
+					
+					
+					
+					//System.out.println("Zeit GenVar: " + (new Date().getTime()-start.getTime()));	
+					start = new Date();
+
+					// Map x to bed_patient
+					Map<String, PatientMatch> matchingTable = new HashMap<String, PatientMatch>();
+
+					int x = 0;
+					for (int k = 0; k < bedCount; k++) {
+						for (int i = 0; i < patients.size(); i++) {
+
+							for (int j = 0; j < patients.get(i).getDuration(); j++) {
+								matchingTable.put("x" + x, new PatientMatch((k), patients.get(i)));
+								x++;
+							}
+						}
+					}
+					
+					//System.out.println("Zeit MatchingTable: " + (new Date().getTime()-start.getTime()));	
+					start = new Date();
+					
+
+				
+				//	for (int i = 0; i < matchingTable.size(); i++) {
+				//		System.out.println("x" + i + " " + matchingTable.get("x" + i));
+				//	}
+					
+					// HashMap f�r Variablen
+					Map<String, IloNumVar> map = new HashMap<String, IloNumVar>();
+					
+					
+					
+					// Hashmap mit den Variablen+Ober/Untergrenzen bef�llen
+					// Variablen fuer Patienten/Betten und Schalter 
+					for (int i = 0; i < (varCount-2); i++) {	
+						map.put("x" + i, cplex.numVar(0, 1, IloNumVarType.Int, "x" + i));
+					}
+					
+			
+					// Hashmap mit den Variablen+Ober/Untergrenzen bef�llen
+					// Y-Presse
+						map.put("x" + (varCount - 2), cplex.numVar(0, Integer.MAX_VALUE, IloNumVarType.Int, "x" + (varCount - 2)));
+					
+				
+
+					// Zielfunktion in CLPEX bef�llen
+					// Betten
+					IloLinearNumExpr objective = cplex.linearNumExpr();
+
+					int bettNr = 0;
+					for (int j = 0; j < patientsDays * bedCount; j++) {
+
+						if (j % patientsDays == 0) {
+							bettNr++;
+						}
+
+						//beseitigt Rundungsfehler von Double
+						objective.addTerm(Math.round(gewichtungZielfunktionBetten * bettNr * 100) / 100.0, map.get("x" + j));
+
+					}
+					
+					
+					//System.out.println("Zeit Zielfunktion: " + (new Date().getTime()-start.getTime()));	
+					start = new Date();
+
+					// Schalter Variablen auf 0 setzen in Zielfunktion
+					int startSwitch = patientsDays * bedCount;
+					
+					for (int i = startSwitch; i < startSwitch + (bedCount * patients.size()); i++) {
+						objective.addTerm(0.0, map.get("x" + i));
+						System.out.println("Schalter x" +i);
+					}
+
+					// Y-Presse
+					objective.addTerm(1.0, map.get("x" + (varCount - 2)));
+
+					// Max/Min Zielfunktion
+					cplex.addMinimize(objective);
+		
+		
+	
+
+		double[][] matrixPart1 = generateMatrixPart1(patients, varCount, difFirstLastDate);
+		
+		fillCplex(cplex, map, matrixPart1, OperatorEnum.Le.getValue());
+		
+		matrixPart1 = null;
+		
+		//System.out.println("Zeit Part1: " + (new Date().getTime()-start.getTime()));	
+		start = new Date();
+
+		double[][] matrixPart2 = generateMatrixPart2(patients, varCount, difFirstLastDate,
+				patientsDays, bedCount);
+		
+		fillCplex(cplex, map, matrixPart2, OperatorEnum.Ge.getValue());
+		
+		matrixPart2 = null;
+		
+		//System.out.println("Zeit Part2: " + (new Date().getTime()-start.getTime()));	
+		start = new Date();
+
+		double[][] matrixPart3 = generateMatrixPart3(patients, varCount, difFirstLastDate, bedCount);
+		fillCplex(cplex, map, matrixPart3, OperatorEnum.Le.getValue());
+
+		matrixPart3 = null;
+		
+		//System.out.println("Zeit Part3: " + (new Date().getTime()-start.getTime()));	
+		start = new Date();
+
+		double[][] matrixPart4 = generateMatrixPart4(patients, varCount, difFirstLastDate,
+				patientsDays, bedCount);
+		
+		fillCplex(cplex, map, matrixPart4, OperatorEnum.Eq.getValue());
+
+		matrixPart4 = null;
+		
+		
+		//System.out.println("Anzahl an Nonzeros: " + cplex.getNNZs());
+
+		// Alle Matrizen erstellt und zu Cplex hinzugefuegt
+				
+		// Export
+		cplex.exportModel(Controller.getInstance().filePath + "export.lp");
+		//cplex.exportModel(Controller.getInstance().filePath + "export.rew"); //Variablen standardisieren
+		cplex.exportModel(Controller.getInstance().filePath + "export.mps");
+		
+		
+		
+		// Solving
+		
+		// Creates max amount of beds
+		ArrayList<Bed> beds = new ArrayList<Bed>();
+		for (int i = 0; i < bedCount; i++) {
+			
+			//+1 because of the 0 index of an array
+			beds.add(new Bed(i+1));
+		}
+		
+		switch (selectedSolver) {
+		case "Cplex":
+			
+			// Solve CPLEX
+						if (cplex.solve()) {
+
+							System.out.println("obj value = " + Math.round(cplex.getObjValue() * 100) / 100.0);
+						
+							// Ueberprueft alle Patienten- und Bettenvariablen 	
+							ArrayList<Patient> servedPatients = new ArrayList<Patient>();
+							
+							for (int i = 0; i < patientsDays * bedCount; i++) {
+								
+								
+								if (Double.compare(Math.round(cplex.getValue(map.get("x" + i))), 1.0) == 0) {
+									
+									Patient patient = matchingTable.get("x" + i).getPatient();
+									int bedNumber = matchingTable.get("x" + i).getBedNumber();
+									
+									// Prueft ob der Patient bereits ein Bett besitzt
+									if(servedPatients.contains(patient)) {
+										System.out.println("FEHLER! Patient hat bereits ein Bett!!!");
+										continue;
+									}
+
+									
+									servedPatients.add(patient);
+										
+										int count = 1;
+										for (int j = 1; j < patient.getDuration(); j++) {
+											
+											if (Double.compare(Math.round(cplex.getValue(map.get("x" + (i+j)))), 1.0) == 0) {
+												count++;
+											}
+										}
+										
+										// Prueft ob der Patient durchgehend und im selben Bett liegt
+										if(count==patient.getDuration()) {
+											beds.get(bedNumber).getPatients().add(patient);
+										//	System.out.println("Patient durchgehend belegt");
+										//	System.out.println("Count: " +count);
+										//	System.out.println("Duration: "+ patient.getDuration());
+										i=i+patient.getDuration()-1;
+									
+										}
+										else
+										{
+											System.out.println("Patient nicht durchgehend belegt");
+											System.out.println("Count: " +count);
+											System.out.println("Duration: "+ patient.getDuration());
+											i=i+patient.getDuration()-1;
+
+										}	
+								}
+
+								// gibt die Variablen der Patienten aus
+								//System.out.println("x" + i + " = " + Math.round(cplex.getValue(map.get("x" + i))));
+
+							}
+						
+							
+							// gibt alle Variablen aus
+							for (int i = 0; i  < map.size(); i++) {
+								System.out.println("x" + i + " = " + Math.round(cplex.getValue(map.get("x" + i))));
+							}
+							
+							// Sortiert die Patienten im Bett aufsteigend nach dem Ankunftsdatum 
+							for (Bed bed : beds) {
+
+							ArrayList<Patient> sortedPatients = new ArrayList<Patient>();
+							
+							for (Patient patient : sortPatientsByDateASC(bed.getPatients())) {
+								sortedPatients.add(patient);
+							}
+							
+							bed.getPatients().clear();
+							bed.setPatients(sortedPatients);
+							}
+							
+							
+							//Betten inklusive Patienten in Controller speichern
+							Controller.getInstance().setBeds(beds);
+							
+						} else {
+							System.out.println("Model cannot be solved");
+						}
+
+					
+			
+			
+			break;
+			
+		case "LPSolve":
+			
+			System.out.println("Start solving with LPSolve");
+			
+			 LpSolve solver =	LpSolve.readFreeMps(Controller.getInstance().filePath + "export.mps",1);
+			 solver.solve();
+		      
+							
+				// Ueberprueft alle Patienten- und Bettenvariablen 	 	
+				ArrayList<Patient> servedPatients = new ArrayList<Patient>();
+				
+			    double[] var = solver.getPtrVariables();
+				
+				for (int i = 0; i < patientsDays * bedCount; i++) {
+					
+								
+					if (Double.compare(Math.round(var[i]), 1.0) == 0) {
+						
+						Patient patient = matchingTable.get("x" + i).getPatient();
+						int bedNumber = matchingTable.get("x" + i).getBedNumber();
+						
+						// Prueft ob der Patient bereits ein Bett besitzt
+						if(servedPatients.contains(patient)) {
+							System.out.println("FEHLER! Patient hat bereits ein Bett!!!");
+							continue;
+						}
+
+						
+						servedPatients.add(patient);
+							
+							int count = 1;
+							for (int j = 1; j < patient.getDuration(); j++) {
+								
+								if (Double.compare(Math.round(var[i+j]), 1.0) == 0) {
+									count++;
+								}
+							}
+							
+							// Prueft ob der Patient durchgehend und im selben Bett liegt
+							if(count==patient.getDuration()) {
+								beds.get(bedNumber).getPatients().add(patient);
+							//	System.out.println("Patient durchgehend belegt");
+							//	System.out.println("Count: " +count);
+							//	System.out.println("Duration: "+ patient.getDuration());
+							i=i+patient.getDuration()-1;
+						
+							}
+							else
+							{
+								System.out.println("Patient nicht durchgehend belegt");
+								System.out.println("Count: " +count);
+								System.out.println("Duration: "+ patient.getDuration());
+								i=i+patient.getDuration()-1;
+
+							}	
+					}
+
+				}
+			
+				
+				// gibt alle Variablen aus
+				for (int i = 0; i  < map.size(); i++) {
+					System.out.println("x" + i + " = " + Math.round(var[i]));
+				}
+				
+				// Sortiert die Patienten im Bett aufsteigend nach dem Ankunftsdatum 
+				for (Bed bed : beds) {
+
+				ArrayList<Patient> sortedPatients = new ArrayList<Patient>();
+				
+				for (Patient patient : sortPatientsByDateASC(bed.getPatients())) {
+					sortedPatients.add(patient);
+				}
+				
+				bed.getPatients().clear();
+				bed.setPatients(sortedPatients);
+				}
+				
+				
+				//Betten inklusive Patienten in Controller speichern
+				Controller.getInstance().setBeds(beds);
+			
+			break;
+			
+			
+		case "Gurobi":
+			
+			System.out.println("Start solving with Gurobi");
+			
+			
+			  // Set log file
+			  GRBEnv env   = new GRBEnv("mip1.log");
+		      
+			  // Import model to Gurobi  	  
+		      GRBModel model = new GRBModel(env, Controller.getInstance().filePath+"export.mps");
+		      
+		      
+		      // Optimize model
+		      model.optimize();
+
+		        System.out.println("Obj value = " + model.get(GRB.DoubleAttr.ObjVal));
+
+		        		
+				// Ueberprueft alle Patienten- und Bettenvariablen 	
+				ArrayList<Patient> servedPatients1 = new ArrayList<Patient>();
+				
+				for (int i = 0; i < patientsDays * bedCount; i++) {
+					
+					
+					if (Double.compare(Math.round(model.getVar(i).get(GRB.DoubleAttr.X)), 1.0) == 0) {
+						
+						Patient patient = matchingTable.get("x" + i).getPatient();
+						int bedNumber = matchingTable.get("x" + i).getBedNumber();
+						
+						// Prueft ob der Patient bereits ein Bett besitzt
+						if(servedPatients1.contains(patient)) {
+							System.out.println("FEHLER! Patient hat bereits ein Bett!!!");
+							continue;
+						}
+
+						
+						servedPatients1.add(patient);
+							
+							int count = 1;
+							for (int j = 1; j < patient.getDuration(); j++) {
+								
+								
+								
+								if (Double.compare(Math.round(model.getVar((i+j)).get(GRB.DoubleAttr.X)), 1.0) == 0) {
+									count++;
+								}
+							}
+							
+							// Prueft ob der Patient durchgehend und im selben Bett liegt
+							if(count==patient.getDuration()) {
+								beds.get(bedNumber).getPatients().add(patient);
+							//	System.out.println("Patient durchgehend belegt");
+							//	System.out.println("Count: " +count);
+							//	System.out.println("Duration: "+ patient.getDuration());
+							i=i+patient.getDuration()-1;
+						
+							}
+							else
+							{
+								System.out.println("Patient nicht durchgehend belegt");
+								System.out.println("Count: " +count);
+								System.out.println("Duration: "+ patient.getDuration());
+								i=i+patient.getDuration()-1;
+
+							}	
+						}
+					}
+			
+				
+					// gibt alle Variablen aus, welche groesser 1 sind 
+					for (int i = 0; i  < map.size(); i++) {
+						if(Math.round(model.getVar((i)).get(GRB.DoubleAttr.X))>1) {
+						System.out.println("x" + i + " = " + Math.round(model.getVar((i)).get(GRB.DoubleAttr.X)));
+						}
+					}
+					
+					// Sortiert die Patienten im Bett aufsteigend nach dem Ankunftsdatum 
+					for (Bed bed : beds) {
+	
+					ArrayList<Patient> sortedPatients = new ArrayList<Patient>();
+					
+					for (Patient patient : sortPatientsByDateASC(bed.getPatients())) {
+						sortedPatients.add(patient);
+					}
+					
+					bed.getPatients().clear();
+					bed.setPatients(sortedPatients);
+					}
+					
+					
+					//Betten inklusive Patienten in Controller speichern
+					Controller.getInstance().setBeds(beds);
+					
+					break;
+
+
+		default:
+			break;
+		}
+		
+				} catch (IloException | LpSolveException | GRBException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			
+				
+
+				
+								
+				
+				
+
+				
+				
+
+			
+				
+
+	}
+
+	private static void fillCplex(IloCplex cplex, Map<String, IloNumVar> map, double[][] matrix, int operator)
+			throws IloException {
+
+				
+		// Restriktionen
+		for (int i = 0; i < (matrix[0].length); i++) {
+			IloNumExpr[] numExprArray = new IloNumExpr[matrix.length - 1];
+			for (int j = 0; j < matrix.length - 1; j++) {
+				IloNumExpr expr = cplex.prod(matrix[j][i], map.get("x" + j));
+				numExprArray[j] = expr;			
+			}
+						
+			if (operator==OperatorEnum.Le.getValue()) {
+				cplex.addLe(cplex.sum(numExprArray), matrix[matrix.length - 1][i]);
+			} else if (operator==OperatorEnum.Eq.getValue()) {
+				cplex.addEq(cplex.sum(numExprArray), matrix[matrix.length - 1][i]);
+			} else if (operator==OperatorEnum.Ge.getValue()) {
+				cplex.addGe(cplex.sum(numExprArray), matrix[matrix.length - 1][i]);
+			}
+
+		}
+
+	}
+	
+	private static ArrayList<Patient> sortPatientsByDateASC(ArrayList<Patient> patients) {
+		ArrayList<Patient> sortedPatients = patients;
+		
+		Collections.sort(sortedPatients, (a, b) -> a.getArrivalDate().compareTo(b.getArrivalDate()));
+		
+		return sortedPatients;
+	}
+	
+	public static Date calculateFirstArrivalDate(ArrayList<Patient> patients) {
+
+		Date firstArrival = new Date(Long.MAX_VALUE);
+
+		for (int i = 0; i < patients.size(); i++) {
+
+			if (patients.get(i).getArrivalDate().before(firstArrival)) {
+				firstArrival = patients.get(i).getArrivalDate();
+			}
+		}
+		return firstArrival;
+	}
+
+	public static Date calculateLastDeparture(ArrayList<Patient> patients) {
+
+		Date lastDeparture = new Date(Long.MIN_VALUE);
+
+		for (int i = 0; i < patients.size(); i++) {
+			if (patients.get(i).getDepartureDate().after(lastDeparture)) {
+				lastDeparture = patients.get(i).getDepartureDate();
+			}
+		}
+		return lastDeparture;
+	}
+	
+	
+
+}

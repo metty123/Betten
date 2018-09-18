@@ -1,0 +1,588 @@
+package de.htwg.om.thesis.bbp.controller;
+
+import java.io.File;
+import java.io.IOException;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.Locale;
+
+import javax.imageio.ImageIO;
+
+import de.htwg.om.thesis.bbp.logic.Tableau;
+import de.htwg.om.thesis.bbp.logic.TableauGoalNeu;
+import de.htwg.om.thesis.bbp.model.Bed;
+import de.htwg.om.thesis.bbp.model.Patient;
+import de.htwg.om.thesis.bbp.model.SolverEnum;
+import de.htwg.om.thesis.bbp.persistence.CSVImport;
+import de.htwg.om.thesis.bbp.view.GanttChartView;
+import javafx.embed.swing.SwingFXUtils;
+import javafx.fxml.FXML;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Alert.AlertType;
+import javafx.scene.image.WritableImage;
+import javafx.scene.control.Label;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.StackPane;
+import javafx.stage.FileChooser;
+import javafx.stage.FileChooser.ExtensionFilter;
+import javafx.stage.Stage;
+
+public class Controller {
+
+	@FXML
+	private javafx.scene.control.Button LPSolve;
+	@FXML
+	private javafx.scene.control.Button Cplex;
+	@FXML
+	private javafx.scene.control.Button Gurobi;
+	@FXML
+	private javafx.scene.control.Button Reoptimize;
+	@FXML
+	private javafx.scene.control.TextField MaxBedCountTextField;
+	@FXML
+	private javafx.scene.control.TextField PenaltyCostsPercentTextField;	
+	@FXML
+	private javafx.scene.control.TextField StartPeriodTextField;
+	@FXML
+	private javafx.scene.control.TextField StopPeriodTextField;
+	@FXML
+	private javafx.scene.control.MenuItem Entwickler;
+	@FXML
+	private javafx.scene.control.MenuItem Frameworks;
+	@FXML
+	private javafx.scene.control.MenuItem Solver;
+	
+		
+	public final static long DAY_IN_MILLI_SECONDS = (1000 * 60 * 60 * 24);
+	
+	public final static long THIRTY_MIN_IN_MILLI_SECONDS = (1000 * 60 * 30);
+	
+	public final static long HOUR_IN_MILLI_SECONDS = (1000 * 60 * 60);
+
+	public javafx.scene.control.TextField getMaxBedCountTextField() {
+		return MaxBedCountTextField;
+	}
+
+
+	public javafx.scene.control.TextField getPenaltyCostsPercentTextField() {
+		return PenaltyCostsPercentTextField;
+	}
+
+		
+	public javafx.scene.control.TextField getStartPeriodTextField() {
+		return StartPeriodTextField;
+	}
+
+
+	public javafx.scene.control.TextField getStopPeriodTextField() {
+		return StopPeriodTextField;
+	}
+
+	public Date getStartPeriodDate() {
+		return getDatepickerDate(Controller.getInstance().getStartPeriodTextField().getText());
+	}
+	
+	public Date getStopPeriodDate() {
+		return getDatepickerDate(Controller.getInstance().getStopPeriodTextField().getText());
+	}
+	
+	public int getDifStartStopDate() {
+		return Controller.getInstance().calculateDates(Controller.getInstance().getStartPeriodDate(), Controller.getInstance().getStopPeriodDate());
+	}
+	
+	private Date getDatepickerDate(String dateString) {
+	  	
+		Date date = null;
+		try {
+			date = SDF.parse(dateString);
+		} catch (ParseException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		return date;
+	}
+	
+	private  int calculateDates(Date first, Date last) {
+		return (int) (((last.getTime() - first.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+	}
+
+	@FXML
+	private javafx.scene.chart.BarChart<Number, String> Chart;
+
+	// FXML start
+	public Controller() {
+		System.out.println("Controller Erzeugt");
+		instance = this;
+
+	}
+	
+	public final static SimpleDateFormat SDF = new SimpleDateFormat("dd.MM.yyyy", Locale.GERMANY);
+
+	public final static SimpleDateFormat SDF_LONG = new SimpleDateFormat("dd.MM.yyyy - HH:mm", Locale.GERMANY);
+	
+	public final static SimpleDateFormat SDF_LONG_UNDERLINE = new SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.GERMANY);
+
+	
+	public final static Date resetDateHoursMinutes(Date date) throws ParseException{
+		
+		Date resetedDate = SDF.parse(SDF.format(date));
+		return resetedDate;
+	}
+
+	@FXML
+	private javafx.scene.control.TextArea ConsoleOutput;
+
+	public void setConsoleOutput(javafx.scene.control.TextArea consoleOutput) {
+		ConsoleOutput = consoleOutput;
+	}
+
+	public javafx.scene.control.TextArea getConsoleOutput() {
+		return ConsoleOutput;
+	}
+
+	@FXML
+	public void Import_CPLEX() {
+
+		final FileChooser fileChooser = new FileChooser();
+		fileChooser.getExtensionFilters().addAll(new ExtensionFilter("CVS", "*.csv"));
+
+		File file = fileChooser.showOpenDialog(null);
+
+		if (file != null) {
+
+			ArrayList<Patient> patients = CSVImport.importCSV(file.getAbsolutePath());
+
+			TableauGoalNeu tableau = new TableauGoalNeu();
+			tableau.generateGesamtMaxtrix(patients, SolverEnum.Cplex.toString());
+
+			Label secondLabel = new Label("Bettenbedarfsplanung");
+			StackPane secondaryLayout = new StackPane();
+			secondaryLayout.getChildren().add(secondLabel);
+
+			Scene secondScene = new Scene(secondaryLayout, 200, 100);
+
+			Stage secondStage = new Stage();
+			secondStage.setTitle("Second Stage");
+			secondStage.setScene(secondScene);
+
+			secondStage = GanttChartView.start(secondStage);
+
+			secondStage.show();
+		} else {
+			Alert alert = new Alert(AlertType.ERROR);
+			alert.setTitle("Import Fehlgeschlagen");
+			alert.setHeaderText("Bitte CSV-Datei im folgenden Format verwenden:\nPatient 1;01.01.2014;03.01.2014");
+
+			alert.showAndWait();
+		}
+
+	}
+
+	// JavaFxControllerPart_end
+
+	@FXML
+	public void Import_LPSOLVE() {
+
+		final FileChooser fileChooser = new FileChooser();
+		fileChooser.getExtensionFilters().addAll(new ExtensionFilter("CVS", "*.csv"));
+
+		File file = fileChooser.showOpenDialog(null);
+
+		if (file != null) {
+
+			ArrayList<Patient> patients = CSVImport.importCSV(file.getAbsolutePath());
+
+			TableauGoalNeu tableau = new TableauGoalNeu();
+			tableau.generateGesamtMaxtrix(patients, SolverEnum.LPSolve.toString());
+
+			Label secondLabel = new Label("Bettenbedarfsplanung");
+			StackPane secondaryLayout = new StackPane();
+			secondaryLayout.getChildren().add(secondLabel);
+
+			Scene secondScene = new Scene(secondaryLayout, 200, 100);
+
+			Stage secondStage = new Stage();
+			secondStage.setTitle("Second Stage");
+			secondStage.setScene(secondScene);
+
+			secondStage = GanttChartView.start(secondStage);
+
+			secondStage.show();
+		}
+
+		else {
+			Alert alert = new Alert(AlertType.ERROR);
+			alert.setTitle("Import Fehlgeschlagen");
+			alert.setHeaderText("Bitte CSV-Datei im folgenden Format verwenden:\nPatient 1;01.01.2014;03.01.2014");
+
+			alert.showAndWait();
+		}
+
+	}
+
+	@FXML
+	public void Import_GUROBI() {
+
+		final FileChooser fileChooser = new FileChooser();
+		fileChooser.getExtensionFilters().addAll(new ExtensionFilter("CVS", "*.csv"));
+
+		File file = fileChooser.showOpenDialog(null);
+
+		if (file != null) {
+
+			ArrayList<Patient> patients = CSVImport.importCSV(file.getAbsolutePath());
+
+			TableauGoalNeu tableau = new TableauGoalNeu();
+
+			tableau.generateGesamtMaxtrix(patients, SolverEnum.Gurobi.toString());
+
+			Label secondLabel = new Label("Bettenbedarfsplanung");
+			StackPane secondaryLayout = new StackPane();
+			secondaryLayout.getChildren().add(secondLabel);
+
+			Scene secondScene = new Scene(secondaryLayout, 200, 100);
+
+			Stage secondStage = new Stage();
+			secondStage.setTitle("Second Stage");
+			secondStage.setScene(secondScene);
+
+			secondStage = GanttChartView.start(secondStage);
+			secondStage.show();
+		}
+		
+		
+
+		else {
+			Alert alert = new Alert(AlertType.ERROR);
+			alert.setTitle("Import Fehlgeschlagen");
+			alert.setHeaderText("Bitte CSV-Datei im folgenden Format verwenden:\nPatient 1;01.01.2014;03.01.2014");
+
+			alert.showAndWait();
+		}
+
+	}
+	
+	@FXML
+	public void frameworks() {
+		
+		Alert alert = new Alert(AlertType.INFORMATION);
+		alert.setTitle("Frameworks");
+		
+		String headerText = "Verwendete Frameworks:\n\nDateAxis by Christian Schudt (c) 2013 MIT License\nIBM Cplex Java Library 12.5";
+		alert.setHeaderText(headerText);
+		
+		GridPane grid = new GridPane();
+		grid.setHgap(10);
+		grid.setVgap(10);
+		grid.setPadding(new Insets(20, 150, 10, 10));
+
+		alert.getDialogPane().setContent(grid);
+		
+		alert.showAndWait();
+	}
+	
+	
+	
+	@FXML
+	public void solver() {
+		
+		Alert alert = new Alert(AlertType.INFORMATION);
+		alert.setTitle("Solver");
+		String headerText = "Verwendete Solver:\n\nIBM Cplex 12.5\nGurobi 7.5.2\nLPSolve 5.5";
+		alert.setHeaderText(headerText);
+		
+		GridPane grid = new GridPane();
+		grid.setHgap(10);
+		grid.setVgap(10);
+		grid.setPadding(new Insets(20, 150, 10, 10));
+
+		alert.getDialogPane().setContent(grid);
+		
+		alert.showAndWait();
+	}
+	
+	@FXML
+	public void Reoptimize() {
+		
+		ArrayList<Patient> originalPatients = Controller.getInstance().getPatients();
+		
+		ArrayList<Patient> changedPatients = new ArrayList<Patient>();
+		
+		// clone array
+		for (Patient patient : originalPatients) {
+			changedPatients.add(new Patient(patient.getName(), patient.getArrivalDate(), patient.getDepartureDate()));
+		}
+		
+		// filter with the new dates
+		ArrayList<Patient> changed = Controller.getInstance().getPatientsChangedArrivalDate();
+		
+		for (Patient patientAll : changedPatients) {
+			
+			for (Patient patientChanged : changed) {
+				if(patientAll.getName().equals(patientChanged.getName())) {
+					patientAll.setArrivalDate(patientChanged.getArrivalDate());
+					patientAll.setDepartureDate(patientChanged.getDepartureDate());
+				}
+			}		
+		}
+		
+		
+		//Filter
+		Date firstArrivalDate = Controller.getInstance().getStartPeriodDate();
+		
+		
+		 // Maximale Aufenthaltsdauer/Betrachtungsdauer 
+		 // Departure Date wird ggf gekuerzt
+		 		
+		int maxDuration = Controller.getInstance().getDifStartStopDate();
+		
+		
+		Date lastAllowedDepatureDate = new Date((long) (firstArrivalDate.getTime() + ((maxDuration-1) * Controller.DAY_IN_MILLI_SECONDS)));
+		
+		System.out.println("lastAllowedDepatureDate "+lastAllowedDepatureDate);
+			
+		Iterator<Patient> patientIterator = changedPatients.iterator();	
+				
+				while (patientIterator.hasNext()) {
+					   Patient patient = patientIterator.next(); 
+					  		
+					   //loescht die Patienten, die nach dem lastAllowDepature erst eintreffen
+						if(patient.getArrivalDate().after(lastAllowedDepatureDate)) {
+							System.out.println("Gel�scht, weil zu sp�te Ankunft " + patient.getName());
+							patientIterator.remove();
+						}
+						
+						//loescht die Patienten, die vor dem firstAllowedArrival abfahren
+						else if(patient.getDepartureDate().compareTo(firstArrivalDate)<0) {
+							System.out.println("Gel�scht, weil zu fr�h abgefahren " + patient.getName());
+							patientIterator.remove();
+						}
+						
+						
+						 if(patient.getDepartureDate().compareTo(lastAllowedDepatureDate)>=0) {
+									
+						    	// Setzt das Abfahrtsdatum auf das maximal erlaubte, falls es ueberschritten wurde
+								patient.setDepartureDate(lastAllowedDepatureDate);
+	
+								}
+						
+						 if(patient.getArrivalDate().before(firstArrivalDate)) {
+								
+								// Setzt das Anfahrtdatum auf das minimal erlaubte, falls es unterschritten wurde
+								patient.setArrivalDate(firstArrivalDate);
+						}
+						
+				}	
+		
+		
+	
+		
+		
+		//
+		TableauGoalNeu tableau = new TableauGoalNeu();
+
+		tableau.generateGesamtMaxtrix(changedPatients, SolverEnum.Gurobi.toString());
+
+		Label secondLabel = new Label("Bettenbedarfsplanung");
+		StackPane secondaryLayout = new StackPane();
+		secondaryLayout.getChildren().add(secondLabel);
+
+		Scene secondScene = new Scene(secondaryLayout, 200, 100);
+
+		Stage secondStage = new Stage();
+		secondStage.setTitle("Second Stage");
+		secondStage.setScene(secondScene);
+
+		secondStage = GanttChartView.start(secondStage);
+
+		secondStage.show();
+		
+		
+		
+	}
+
+	
+
+	// FXML end
+
+	// import
+
+	private ArrayList<Bed> beds;
+
+	// FXML end
+
+	// import
+
+	private ArrayList<Patient> patients;
+	
+	private ArrayList<Patient> patientsChangedArrivalDate;
+	
+	private ArrayList<Patient> patientsOrignalDates;
+	
+	private ArrayList<Date> goalDays;
+	
+	
+	public ArrayList<Date> getGoalDays() {
+		return goalDays;
+	}
+
+
+	public void setGoalDays(ArrayList<Date> goalDays) {
+		this.goalDays = goalDays;
+	}
+
+
+	public ArrayList<Patient> getPatientsChangedArrivalDate() {
+		return patientsChangedArrivalDate;
+	}
+	
+	// prueft vor dem Hinzuf�gen, ob die orignalen Zeitpunkte gesetzt sind 
+	public void addPatientChangedArrivalDatePlusCheck(Patient newPatient) {
+		
+		ArrayList<Patient> patientsChanged = Controller.getInstance().getPatientsChangedArrivalDate();
+		
+		ArrayList<Patient> originals = Controller.getInstance().getPatientsOrignalDates();
+		
+		for (Patient originalPatient : originals) {
+			if(originalPatient.getName().equals(newPatient.getName())){
+				
+				if(originalPatient.getArrivalDate().getTime()==newPatient.getArrivalDate().getTime()) {
+					
+					for (Patient patientChanged : patientsChanged) {
+						
+						if(patientChanged.getName().equals(originalPatient.getName())) {
+							
+							patientsChanged.remove(patientChanged);
+						}
+					}
+					
+				}
+				
+				else {
+					patientsChanged.add(newPatient);
+				}
+				
+			}
+		}
+		
+		
+	}
+
+	public void setPatientsChangedArrivalDate(ArrayList<Patient> patientsChangedArrivalDate) {
+		this.patientsChangedArrivalDate = patientsChangedArrivalDate;
+	}
+	
+	public ArrayList<Patient> getPatientsOrignalDates() {
+		return patientsOrignalDates;
+	}
+
+
+	public void setPatientsOrignalDates(ArrayList<Patient> patientsOrignalDates) {
+		this.patientsOrignalDates = patientsOrignalDates;
+	}
+
+	private static Controller instance;
+
+	// Anzahl der Betten
+	private int bedCount = 12;
+
+	// Schaltervariable
+	private double switchVariable = -1000.00;
+
+	// Bettengewichtung Zielfunktion
+	private double gewichtungZielfunktionBetten = 0.1;
+
+	// Strafkosten Goal Gewichtung in %
+	private double penaltyCostPercent = 33.33333;
+
+	// Export Pfad
+	public final String filePath = System.getProperty("user.home") + "\\Desktop\\";
+
+	private int patientDays;
+
+	private Date firstArrivalDate;
+
+	private Date lastDepatureDate;
+	
+	public static Controller getInstance() {
+
+		if (Controller.instance == null) {
+			Controller.instance = new Controller();
+		}
+		return Controller.instance;
+	}
+
+	public int getPatientDays() {
+		return patientDays;
+	}
+
+	public void setPatientDays(int patientDays) {
+		this.patientDays = patientDays;
+	}
+
+	public ArrayList<Patient> getPatients() {
+		return patients;
+	}
+
+	public int getBedCount() {
+		System.out.println("XXX Bettenanzahl: " + bedCount);
+		return bedCount;
+	}
+
+	public void setBedCount(int bedCount) {
+		this.bedCount = bedCount;
+	}
+
+	public double getSwitchVariable() {
+		return switchVariable;
+	}
+
+	public double getGewichtungZielfunktionBetten() {
+		return gewichtungZielfunktionBetten;
+	}
+
+	public void setPatients(ArrayList<Patient> patients) {
+		this.patients = patients;
+	}
+
+	public ArrayList<Bed> getBeds() {
+		return beds;
+	}
+
+	public void setBeds(ArrayList<Bed> beds) {
+		this.beds = beds;
+	}
+
+	public Date getFirstArrivalDate() {
+		return firstArrivalDate;
+	}
+
+	public void setFirstArrivalDate(Date firstArrivalDate) {
+		this.firstArrivalDate = firstArrivalDate;
+	}
+
+	public Date getLastDepatureDate() {
+		return lastDepatureDate;
+	}
+
+	public void setLastDepatureDate(Date lastDepature) {
+		this.lastDepatureDate = lastDepature;
+	}
+
+	public void setPenaltyCostPercent(double penaltyCostPercent) {
+		this.penaltyCostPercent = penaltyCostPercent;
+	}
+
+	public double getPenaltyCostPercent() {
+		return Double.valueOf(Controller.getInstance().getPenaltyCostsPercentTextField().getText());
+	}
+
+}

@@ -1,0 +1,47 @@
+package de.htwg.om.thesis.bbp.model;
+
+import java.util.ArrayList;
+
+public class Bed {
+
+	private int bedNumber;
+	private ArrayList<Patient> patients = new ArrayList<Patient>();
+	private ArrayList<Gap> gaps = new ArrayList<Gap>();
+	private ArrayList<Gap> filteredGaps = new ArrayList<Gap>();
+
+
+	public Bed(int bedNumber) {
+		super();
+		this.bedNumber = bedNumber;
+	}
+
+	public int getBedNumber() {
+		return bedNumber;
+	}
+
+	public ArrayList<Patient> getPatients() {
+		return patients;
+	}
+	
+	
+
+	public void setPatients(ArrayList<Patient> patients) {
+		this.patients = patients;
+	}
+
+	public ArrayList<Gap> getGaps() {
+		return gaps;
+	}
+
+	public ArrayList<Gap> getFilteredGaps() {
+		return filteredGaps;
+	}
+
+	public void setFilteredGaps(ArrayList<Gap> filteredGaps) {
+		this.filteredGaps = filteredGaps;
+	}
+	
+	
+	
+
+}

@@ -1,0 +1,40 @@
+package de.htwg.om.thesis.bbp.model;
+
+import java.util.Date;
+
+public class Patient {
+
+	private String name;
+	private Date arrivalDate;
+	private Date departureDate;
+	
+	public Patient(String name, Date arrivalDate, Date departureDate) {
+		super();
+		this.name = name;
+		this.arrivalDate = arrivalDate;
+		this.departureDate = departureDate;
+	}
+	
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+	public Date getArrivalDate() {
+		return arrivalDate;
+	}
+	public void setArrivalDate(Date arrivalDate) {
+		this.arrivalDate = arrivalDate;
+	}
+	public Date getDepartureDate() {
+		return departureDate;
+	}
+	public void setDepartureDate(Date departureDate) {
+		this.departureDate = departureDate;
+	}
+	public int getDuration() {
+		return (int) (((getDepartureDate().getTime() -getArrivalDate().getTime())/ (1000 * 60 * 60 * 24))+1);
+	}
+	
+}
